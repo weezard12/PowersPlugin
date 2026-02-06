@@ -1,0 +1,4 @@
+name: Powers
+version: '1.0'
+main: me.weezard12.powers.Powers
+api-version: '1.21'
