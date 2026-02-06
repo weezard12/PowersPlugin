@@ -4,6 +4,7 @@ import me.weezard12.powers.api.AbilityRegistry;
 import me.weezard12.powers.api.PlayerPowerManager;
 import me.weezard12.powers.api.PowerRegistry;
 import me.weezard12.powers.api.PowersApi;
+import me.weezard12.powers.cooldowns.CooldownManager;
 import me.weezard12.powers.internal.SimpleAbilityRegistry;
 import me.weezard12.powers.internal.SimplePlayerPowerManager;
 import me.weezard12.powers.internal.SimplePowerRegistry;
@@ -21,6 +22,7 @@ public final class Powers extends JavaPlugin implements PowersApi {
         abilityRegistry = new SimpleAbilityRegistry();
         powerRegistry = new SimplePowerRegistry();
         playerPowerManager = new SimplePlayerPowerManager(getLogger());
+        CooldownManager.init(this);
         Bukkit.getServicesManager().register(PowersApi.class, this, this, ServicePriority.Normal);
     }
 
