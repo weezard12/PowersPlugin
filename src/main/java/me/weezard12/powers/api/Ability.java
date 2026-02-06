@@ -1,5 +1,7 @@
 package me.weezard12.powers.api;
 
+import java.util.Collections;
+import java.util.List;
 import me.weezard12.powers.cooldowns.AbilityCooldown;
 import me.weezard12.powers.cooldowns.Cooldown;
 import me.weezard12.powers.cooldowns.CooldownManager;
@@ -9,6 +11,20 @@ public interface Ability {
     String getId();
 
     String getName();
+
+    /**
+     * Optional description for menus or tooltips.
+     */
+    default List<String> getDescription() {
+        return Collections.emptyList();
+    }
+
+    /**
+     * Optional icon key for resource-pack driven textures.
+     */
+    default String getIconKey() {
+        return null;
+    }
 
     default void onGrant(Player player, Power power) {
         // Optional: override for grant-side effects.

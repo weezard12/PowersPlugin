@@ -6,4 +6,8 @@ public interface PowersApi {
     PowerRegistry getPowerRegistry();
 
     PlayerPowerManager getPlayerPowerManager();
+
+    AbilityActivationDispatcher getActivationDispatcher();
+
+    PowerRarityRegistry getPowerRarityRegistry();
 }
