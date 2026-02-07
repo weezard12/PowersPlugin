@@ -5,6 +5,7 @@ It includes:
 
 - Active abilities with automatic right-click, shift-right-click, left-click, shift-left-click dispatch.
 - Passive abilities with built-in event routing (join, quit, damage, death, kill, tick).
+- Modular condition system for ability trigger/enable/disable rules.
 - Cooldowns with long-duration support.
 - Power metadata (rarity, alignment, description, icon key).
 - Built-in passive and active abilities (potion effects, healing, dashes, shockwaves, fireballs, damage modifiers).
@@ -90,6 +91,82 @@ Active abilities:
 - ShockwaveActiveAbility
 - FireballActiveAbility
 - PotionEffectActiveAbility
+
+## Condition System
+
+Abilities can now be condition-driven via `ConditionalAbility` or by wrapping existing abilities with:
+
+- `ConditionedActiveAbility`
+- `ConditionedPassiveAbility`
+
+Rules are composable, ordered, and stackable (`List<ConditionRule>`). Built-in default rule factories live in:
+
+- `DefaultConditionRules`
+
+Default click conditions:
+
+- `onRightClick`
+- `onShiftRightClick`
+- `onAnyRightClick`
+- `onLeftClick`
+- `onShiftLeftClick`
+- `onAnyLeftClick`
+
+Default item conditions:
+
+- `onStartHoldHand`
+- `onStartHoldOffHand`
+- `onStartHoldAnyHand`
+- `onFinishHoldHand`
+- `onFinishHoldOffHand`
+- `onFinishHoldAnyHand`
+- `onHoldInventory`
+- `onDrop`
+- `onPickUp`
+
+Example: activate fire resistance only while a specific sword is held in any hand.
+
+```java
+ItemMatcher swordMatcher = ItemMatchers.similar(customSwordStack);
+
+PassiveAbility fireResist = new PotionEffectPassiveAbility(
+    "item:fire_resist", "Fire Resistance", "fire_resistance", 0
+);
+
+PassiveAbility conditioned = new ConditionedPassiveAbility(
+    fireResist,
+    Arrays.asList(
+        DefaultConditionRules.onStartHoldAnyHand(swordMatcher),
+        DefaultConditionRules.onFinishHoldAnyHand(swordMatcher)
+    ),
+    false
+);
+```
+
+`onHoldInventory` defaults to `SYNC` mode, so it can keep ability state aligned with whether the item still exists in the inventory.
+
+### Custom Conditions (Other Plugins)
+
+Other plugins can define custom conditions by:
+
+- implementing `AbilityCondition`
+- using `DefaultConditionRules.onCustomTrigger("your_plugin:trigger_key")`
+- dispatching custom triggers via `api.getAbilityConditionManager().dispatchCustomTrigger(...)`
+
+Example:
+
+```java
+ActiveAbility ability = new ConditionedActiveAbility(
+    new DashActiveAbility("my:dash", "Dash", 1.2, 0.2, false, 2L),
+    Arrays.asList(
+        DefaultConditionRules.onCustomTrigger("myplugin:dash_trigger")
+    ),
+    true
+);
+
+// In your plugin listener/service:
+api.getAbilityConditionManager().dispatchCustomTrigger(player, "myplugin:dash_trigger", event, null);
+```
 
 ## Passive Potion Effects
 

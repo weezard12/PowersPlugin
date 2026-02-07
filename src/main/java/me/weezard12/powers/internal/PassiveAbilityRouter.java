@@ -22,11 +22,14 @@ import org.bukkit.event.player.PlayerQuitEvent;
 
 public final class PassiveAbilityRouter implements Listener, Runnable {
     private final PlayerPowerManager playerPowerManager;
+    private final SimpleAbilityConditionManager conditionManager;
     private final Logger logger;
     private long tickCounter = 0L;
 
-    public PassiveAbilityRouter(PlayerPowerManager playerPowerManager, Logger logger) {
+    public PassiveAbilityRouter(PlayerPowerManager playerPowerManager, SimpleAbilityConditionManager conditionManager,
+                                Logger logger) {
         this.playerPowerManager = playerPowerManager;
+        this.conditionManager = conditionManager;
         this.logger = logger;
     }
 
@@ -79,11 +82,14 @@ public final class PassiveAbilityRouter implements Listener, Runnable {
             return;
         }
         for (Power power : powers) {
-            for (Ability ability : power.getAbilities()) {
+            for (Ability ability : power.getPassiveAbilities()) {
                 if (!(ability instanceof PassiveAbility)) {
                     continue;
                 }
                 PassiveAbility passive = (PassiveAbility) ability;
+                if (!conditionManager.isPassiveEnabled(player, power, passive)) {
+                    continue;
+                }
                 long interval = passive.getTickIntervalTicks();
                 if (interval <= 0L || (tick % interval) != 0L) {
                     continue;
@@ -106,12 +112,16 @@ public final class PassiveAbilityRouter implements Listener, Runnable {
             return;
         }
         for (Power power : powers) {
-            for (Ability ability : power.getAbilities()) {
+            for (Ability ability : power.getPassiveAbilities()) {
                 if (!(ability instanceof PassiveAbility)) {
                     continue;
                 }
                 try {
-                    dispatch.apply((PassiveAbility) ability, power);
+                    PassiveAbility passive = (PassiveAbility) ability;
+                    if (!conditionManager.isPassiveEnabled(player, power, passive)) {
+                        continue;
+                    }
+                    dispatch.apply(passive, power);
                 } catch (Exception ex) {
                     logger.log(Level.SEVERE, "Passive ability handler failed: " + ability.getId(), ex);
                 }

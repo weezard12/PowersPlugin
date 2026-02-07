@@ -9,14 +9,26 @@ import java.util.logging.Logger;
 import me.weezard12.powers.api.Ability;
 import me.weezard12.powers.api.PlayerPowerManager;
 import me.weezard12.powers.api.Power;
+import me.weezard12.powers.api.conditions.AbilityConditionManager;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 public final class SimplePlayerPowerManager implements PlayerPowerManager {
     private final ConcurrentHashMap<UUID, Set<Power>> playerPowers = new ConcurrentHashMap<UUID, Set<Power>>();
     private final Logger logger;
+    private volatile AbilityConditionManager conditionManager;
 
     public SimplePlayerPowerManager(Logger logger) {
+        this(logger, null);
+    }
+
+    public SimplePlayerPowerManager(Logger logger, AbilityConditionManager conditionManager) {
         this.logger = logger;
+        this.conditionManager = conditionManager;
+    }
+
+    public void setAbilityConditionManager(AbilityConditionManager conditionManager) {
+        this.conditionManager = conditionManager;
     }
 
     @Override
@@ -34,6 +46,10 @@ public final class SimplePlayerPowerManager implements PlayerPowerManager {
             } catch (Exception ex) {
                 logger.log(Level.SEVERE, "Ability onGrant failed: " + ability.getId(), ex);
             }
+        }
+        AbilityConditionManager manager = conditionManager;
+        if (manager != null) {
+            manager.onPowerAdded(player, power);
         }
         return true;
     }
@@ -53,6 +69,10 @@ public final class SimplePlayerPowerManager implements PlayerPowerManager {
             } catch (Exception ex) {
                 logger.log(Level.SEVERE, "Ability onRevoke failed: " + ability.getId(), ex);
             }
+        }
+        AbilityConditionManager manager = conditionManager;
+        if (manager != null) {
+            manager.onPowerRemoved(player, power);
         }
         return true;
     }
@@ -104,7 +124,8 @@ public final class SimplePlayerPowerManager implements PlayerPowerManager {
 
     @Override
     public void clearPowers(UUID playerId) {
-        clearPowers(playerId, null);
+        Player player = playerId == null ? null : Bukkit.getPlayer(playerId);
+        clearPowers(playerId, player);
     }
 
     private void clearPowers(UUID playerId, Player player) {
@@ -114,6 +135,14 @@ public final class SimplePlayerPowerManager implements PlayerPowerManager {
         Set<Power> powers = playerPowers.remove(playerId);
         if (powers == null) {
             return;
+        }
+        AbilityConditionManager manager = conditionManager;
+        if (manager != null) {
+            if (player != null) {
+                manager.onPowersCleared(player);
+            } else {
+                manager.clearPlayerState(playerId);
+            }
         }
         if (player == null) {
             return;

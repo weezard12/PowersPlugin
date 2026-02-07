@@ -26,7 +26,7 @@ public abstract class Cooldown implements Runnable {
         if (ticksElapsed >= maxTicks) {
             running = false;
             onFinish();
-            CooldownManager.removeCooldown(player, id);
+            CooldownManager.removeCooldown(this);
             return;
         }
 
@@ -56,7 +56,7 @@ public abstract class Cooldown implements Runnable {
 
     public void cancel() {
         running = false;
-        CooldownManager.removeCooldown(player, id);
+        CooldownManager.removeCooldown(this);
     }
 
     /**
@@ -85,6 +85,10 @@ public abstract class Cooldown implements Runnable {
         if (!running) return;
         running = false;
         onFinish();
-        CooldownManager.removeCooldown(player, id);
+        CooldownManager.removeCooldown(this);
+    }
+
+    void stopInternal() {
+        running = false;
     }
 }

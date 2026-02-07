@@ -1,5 +1,7 @@
 package me.weezard12.powers.internal;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Set;
 import me.weezard12.powers.api.Ability;
 import me.weezard12.powers.api.AbilityActivation;
@@ -11,9 +13,12 @@ import org.bukkit.entity.Player;
 
 public final class SimpleAbilityActivationDispatcher implements AbilityActivationDispatcher {
     private final PlayerPowerManager playerPowerManager;
+    private final SimpleAbilityConditionManager conditionManager;
 
-    public SimpleAbilityActivationDispatcher(PlayerPowerManager playerPowerManager) {
+    public SimpleAbilityActivationDispatcher(PlayerPowerManager playerPowerManager,
+                                             SimpleAbilityConditionManager conditionManager) {
         this.playerPowerManager = playerPowerManager;
+        this.conditionManager = conditionManager;
     }
 
     @Override
@@ -25,24 +30,31 @@ public final class SimpleAbilityActivationDispatcher implements AbilityActivatio
         if (powers.isEmpty()) {
             return false;
         }
+        conditionManager.handleActivationForPassives(player, powers, activation);
 
         boolean handled = false;
         for (Power power : powers) {
+            Set<ActiveAbility> invoked = Collections.newSetFromMap(new IdentityHashMap<ActiveAbility, Boolean>());
+
             ActiveAbility mapped = power.getActiveAbility(activation);
             if (mapped != null) {
-                handled |= mapped.tryActivate(player, power, activation);
-                continue;
+                handled |= conditionManager.tryActivateConditional(player, power, mapped, activation);
+                invoked.add(mapped);
             }
 
             if (activation == AbilityActivation.ULTIMATE && power.getUltimateAbility() != null) {
-                handled |= power.getUltimateAbility().tryActivate(player, power, activation);
-                continue;
+                ActiveAbility ultimate = power.getUltimateAbility();
+                handled |= conditionManager.tryActivateConditional(player, power, ultimate, activation);
+                invoked.add(ultimate);
             }
 
             for (Ability ability : power.getAbilities()) {
                 if (ability instanceof ActiveAbility) {
                     ActiveAbility active = (ActiveAbility) ability;
-                    handled |= active.tryActivate(player, power, activation);
+                    if (invoked.contains(active)) {
+                        continue;
+                    }
+                    handled |= conditionManager.tryActivateConditional(player, power, active, activation);
                 }
             }
         }
