@@ -13,10 +13,7 @@ import me.weezard12.powers.api.PowerRegistry;
 import me.weezard12.powers.api.PowersApi;
 import me.weezard12.powers.api.conditions.AbilityConditionManager;
 import me.weezard12.powers.cooldowns.CooldownManager;
-import me.weezard12.powers.internal.AbilityActivationListener;
-import me.weezard12.powers.internal.PassiveAbilityRouter;
 import me.weezard12.powers.internal.SimpleAbilityConditionManager;
-import me.weezard12.powers.internal.SimpleAbilityActivationDispatcher;
 import me.weezard12.powers.internal.SimpleAbilityRegistry;
 import me.weezard12.powers.internal.SimplePlayerPowerManager;
 import me.weezard12.powers.internal.SimplePowerRegistry;
@@ -34,7 +31,6 @@ public final class Powers extends JavaPlugin implements PowersApi {
     private AbilityActivationDispatcher activationDispatcher;
     private PowerRarityRegistry powerRarityRegistry;
     private SimpleAbilityConditionManager abilityConditionManager;
-    private PassiveAbilityRouter passiveAbilityRouter;
 
     @Override
     public void onEnable() {
@@ -44,17 +40,13 @@ public final class Powers extends JavaPlugin implements PowersApi {
         playerPowerManager = manager;
         abilityConditionManager = new SimpleAbilityConditionManager(this, playerPowerManager, getLogger());
         manager.setAbilityConditionManager(abilityConditionManager);
-        activationDispatcher = new SimpleAbilityActivationDispatcher(playerPowerManager, abilityConditionManager);
+        activationDispatcher = abilityConditionManager;
         powerRarityRegistry = new SimplePowerRarityRegistry();
         registerDefaultRarities(powerRarityRegistry);
         CooldownManager.init(this);
-        passiveAbilityRouter = new PassiveAbilityRouter(playerPowerManager, abilityConditionManager, getLogger());
         Bukkit.getServicesManager().register(PowersApi.class, this, this, ServicePriority.Normal);
-        Bukkit.getPluginManager().registerEvents(new AbilityActivationListener(activationDispatcher), this);
         Bukkit.getPluginManager().registerEvents(abilityConditionManager, this);
-        Bukkit.getPluginManager().registerEvents(passiveAbilityRouter, this);
         Bukkit.getScheduler().runTaskTimer(this, abilityConditionManager, 1L, 1L);
-        Bukkit.getScheduler().runTaskTimer(this, passiveAbilityRouter, 1L, 1L);
     }
 
     @Override

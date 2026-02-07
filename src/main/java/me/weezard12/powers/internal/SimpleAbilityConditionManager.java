@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -20,6 +21,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import me.weezard12.powers.api.Ability;
 import me.weezard12.powers.api.AbilityActivation;
+import me.weezard12.powers.api.AbilityActivationDispatcher;
 import me.weezard12.powers.api.ActiveAbility;
 import me.weezard12.powers.api.PassiveAbility;
 import me.weezard12.powers.api.PlayerPowerManager;
@@ -38,7 +40,12 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
@@ -47,7 +54,7 @@ import org.bukkit.plugin.Plugin;
 /**
  * Runtime condition manager for active/passive ability state.
  */
-public final class SimpleAbilityConditionManager implements AbilityConditionManager, Listener, Runnable {
+public final class SimpleAbilityConditionManager implements AbilityConditionManager, AbilityActivationDispatcher, Listener, Runnable {
     private static final EnumSet<ConditionTrigger> HOLD_TRIGGERS = EnumSet.of(
             ConditionTrigger.START_HOLD_HAND,
             ConditionTrigger.START_HOLD_OFF_HAND,
@@ -112,6 +119,63 @@ public final class SimpleAbilityConditionManager implements AbilityConditionMana
     @Override
     public void onPowersCleared(Player player) {
         clearPlayerState(player);
+    }
+
+    @Override
+    public boolean dispatch(Player player, AbilityActivation activation) {
+        if (player == null || activation == null) {
+            return false;
+        }
+        if (!Bukkit.isPrimaryThread()) {
+            if (plugin == null || !plugin.isEnabled()) {
+                return false;
+            }
+            try {
+                Future<Boolean> future = Bukkit.getScheduler().callSyncMethod(plugin,
+                        () -> dispatch(player, activation));
+                return future.get(10L, TimeUnit.SECONDS);
+            } catch (TimeoutException ex) {
+                logger.log(Level.SEVERE, "Timed out while dispatching activation: " + activation, ex);
+                return false;
+            } catch (Exception ex) {
+                logger.log(Level.SEVERE, "Failed to dispatch activation: " + activation, ex);
+                return false;
+            }
+        }
+
+        Set<Power> powers = playerPowerManager.getPowers(player);
+        if (powers.isEmpty()) {
+            return false;
+        }
+        handleActivationForPassives(player, powers, activation);
+
+        boolean handled = false;
+        for (Power power : powers) {
+            Set<ActiveAbility> invoked = Collections.newSetFromMap(new IdentityHashMap<ActiveAbility, Boolean>());
+
+            ActiveAbility mapped = power.getActiveAbility(activation);
+            if (mapped != null) {
+                handled |= tryActivateConditional(player, power, mapped, activation);
+                invoked.add(mapped);
+            }
+
+            if (activation == AbilityActivation.ULTIMATE && power.getUltimateAbility() != null) {
+                ActiveAbility ultimate = power.getUltimateAbility();
+                handled |= tryActivateConditional(player, power, ultimate, activation);
+                invoked.add(ultimate);
+            }
+
+            for (Ability ability : power.getAbilities()) {
+                if (ability instanceof ActiveAbility) {
+                    ActiveAbility active = (ActiveAbility) ability;
+                    if (invoked.contains(active)) {
+                        continue;
+                    }
+                    handled |= tryActivateConditional(player, power, active, activation);
+                }
+            }
+        }
+        return handled;
     }
 
     @Override
@@ -224,6 +288,12 @@ public final class SimpleAbilityConditionManager implements AbilityConditionMana
         handleDropTrigger(player, event, eventItem);
     }
 
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        dispatchPassive(player, (ability, power) -> ability.onJoin(event, player, power));
+    }
+
     @EventHandler(ignoreCancelled = true)
     public void onPickUp(PlayerPickupItemEvent event) {
         if (modernPickupListenerRegistered) {
@@ -238,8 +308,42 @@ public final class SimpleAbilityConditionManager implements AbilityConditionMana
     }
 
     @EventHandler
+    public void onDamage(EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player)) {
+            return;
+        }
+        Player player = (Player) event.getEntity();
+        dispatchPassive(player, (ability, power) -> ability.onDamage(event, player, power));
+    }
+
+    @EventHandler
+    public void onDeath(PlayerDeathEvent event) {
+        Player victim = event.getEntity();
+        dispatchPassive(victim, (ability, power) -> ability.onDeath(event, victim, power));
+
+        Player killer = victim.getKiller();
+        if (killer != null && killer.isOnline()) {
+            dispatchPassive(killer, (ability, power) -> ability.onKill(event, killer, victim, power));
+        }
+    }
+
+    @EventHandler
+    public void onInteract(PlayerInteractEvent event) {
+        if (!isMainHand(event)) {
+            return;
+        }
+        AbilityActivation activation = toActivation(event);
+        if (activation == AbilityActivation.UNKNOWN) {
+            return;
+        }
+        dispatch(event.getPlayer(), activation);
+    }
+
+    @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        clearPlayerState(event.getPlayer());
+        Player player = event.getPlayer();
+        dispatchPassive(player, (ability, power) -> ability.onQuit(event, player, power));
+        clearPlayerState(player);
     }
 
     @Override
@@ -260,6 +364,7 @@ public final class SimpleAbilityConditionManager implements AbilityConditionMana
             HandSnapshot after = HandSnapshot.capture(player);
             applyTriggers(player, powers, toTriggerRefs(HOLD_TRIGGERS), null, null, null, before, after, false);
             handSnapshots.put(player.getUniqueId(), after);
+            dispatchPassiveTick(player, powers, tickCounter);
             pruneState(player.getUniqueId(), powers);
         }
     }
@@ -600,6 +705,86 @@ public final class SimpleAbilityConditionManager implements AbilityConditionMana
         return normalized.replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
     }
 
+    private void dispatchPassive(Player player, PassiveDispatch dispatch) {
+        if (player == null || dispatch == null) {
+            return;
+        }
+        Set<Power> powers = playerPowerManager.getPowers(player);
+        if (powers.isEmpty()) {
+            return;
+        }
+        for (Power power : powers) {
+            for (Ability ability : power.getPassiveAbilities()) {
+                if (!(ability instanceof PassiveAbility)) {
+                    continue;
+                }
+                try {
+                    PassiveAbility passive = (PassiveAbility) ability;
+                    if (!isPassiveEnabled(player, power, passive)) {
+                        continue;
+                    }
+                    dispatch.apply(passive, power);
+                } catch (Exception ex) {
+                    logger.log(Level.SEVERE, "Passive ability handler failed: " + ability.getId(), ex);
+                }
+            }
+        }
+    }
+
+    private void dispatchPassiveTick(Player player, Set<Power> powers, long tick) {
+        if (player == null || powers == null || powers.isEmpty()) {
+            return;
+        }
+        for (Power power : powers) {
+            for (Ability ability : power.getPassiveAbilities()) {
+                if (!(ability instanceof PassiveAbility)) {
+                    continue;
+                }
+                PassiveAbility passive = (PassiveAbility) ability;
+                if (!isPassiveEnabled(player, power, passive)) {
+                    continue;
+                }
+                long interval = passive.getTickIntervalTicks();
+                if (interval <= 0L || (tick % interval) != 0L) {
+                    continue;
+                }
+                try {
+                    passive.onTick(player, power, tick);
+                } catch (Exception ex) {
+                    logger.log(Level.SEVERE, "Passive ability onTick failed: " + ability.getId(), ex);
+                }
+            }
+        }
+    }
+
+    private static AbilityActivation toActivation(PlayerInteractEvent event) {
+        Action action = event.getAction();
+        boolean sneaking = event.getPlayer().isSneaking();
+        if (action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK) {
+            return sneaking ? AbilityActivation.SHIFT_RIGHT_CLICK : AbilityActivation.RIGHT_CLICK;
+        }
+        if (action == Action.LEFT_CLICK_AIR || action == Action.LEFT_CLICK_BLOCK) {
+            return sneaking ? AbilityActivation.SHIFT_LEFT_CLICK : AbilityActivation.LEFT_CLICK;
+        }
+        return AbilityActivation.UNKNOWN;
+    }
+
+    private static boolean isMainHand(PlayerInteractEvent event) {
+        try {
+            Method getHand = event.getClass().getMethod("getHand");
+            Object hand = getHand.invoke(event);
+            if (hand == null) {
+                return true;
+            }
+            Class<?> enumClass = Class.forName("org.bukkit.inventory.EquipmentSlot");
+            Object main = Enum.valueOf(enumClass.asSubclass(Enum.class), "HAND");
+            return hand.equals(main);
+        } catch (Exception ignored) {
+            // Pre-1.9 or no offhand support.
+            return true;
+        }
+    }
+
     private void handleDropTrigger(Player player, Object sourceEvent, ItemStack eventItem) {
         HandSnapshot before = snapshotBefore(player);
         HandSnapshot after = snapshotAfter(player);
@@ -776,5 +961,9 @@ public final class SimpleAbilityConditionManager implements AbilityConditionMana
         private static HandSnapshot capture(Player player) {
             return new HandSnapshot(PlayerItemAccess.getMainHand(player), PlayerItemAccess.getOffHand(player));
         }
+    }
+
+    private interface PassiveDispatch {
+        void apply(PassiveAbility ability, Power power);
     }
 }
